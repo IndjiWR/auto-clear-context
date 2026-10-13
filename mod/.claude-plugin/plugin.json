@@ -1,0 +1,27 @@
+{
+  "name": "auto-clear-context",
+  "version": "0.2.0",
+  "description": "Vicino alle soglie di contesto (morbida, dura, margine di sicurezza) Claude salva lo stato in un handoff validato; la mod esegue /clear e fa ripartire il lavoro nella sessione pulita.",
+  "author": { "name": "Indji" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "threshold": {
+      "type": "number",
+      "title": "Soglia morbida (%)",
+      "description": "Percentuale della finestra di contesto da cui la mod segnala a Claude la zona morbida: l'handoff è previsto al prossimo punto naturale. 0 spegne il monitor (tutte le zone), altrimenti 1-85. Si cambia anche con /soglia.",
+      "default": 40
+    },
+    "hardThreshold": {
+      "type": "number",
+      "title": "Soglia dura (%)",
+      "description": "Percentuale da cui l'handoff è previsto al primo punto sicuro; da morbida + 10 a 95. Il margine di sicurezza (handoff subito) sta 15 punti sopra, al massimo al 95%. Si cambia anche con /soglia N M.",
+      "default": 60
+    },
+    "maxClearsPerHour": {
+      "type": "number",
+      "title": "Clear automatici per ora",
+      "description": "Quanti clear automatici la mod esegue al massimo in un'ora.",
+      "default": 3
+    }
+  }
+}
