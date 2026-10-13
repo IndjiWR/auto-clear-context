@@ -1,0 +1,12 @@
+{
+  "name": "auto-clear-context",
+  "owner": { "name": "IndjiWR" },
+  "description": "Mod per Claude Code: handoff validato e /clear automatico vicino alle soglie di contesto.",
+  "plugins": [
+    {
+      "name": "auto-clear-context",
+      "source": "./mod",
+      "description": "Vicino alle soglie di contesto Claude salva lo stato in un handoff validato; la mod esegue /clear e fa ripartire il lavoro nella sessione pulita."
+    }
+  ]
+}
