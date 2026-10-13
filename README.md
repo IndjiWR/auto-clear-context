@@ -83,8 +83,9 @@ Ways to set them:
 
 Where `/config` has no rows for the plugin (headless sessions, the desktop Code tab), `/soglia` saves the values in the mod's own store. They apply at once in every session and take precedence over `/config` from then on; set the `/config` value again with `/soglia` to drop the override.
 
-<!-- Screenshot of the /soglia panel: save it as docs/soglia-panel.png and replace this comment with
-![The /soglia panel in a terminal session](docs/soglia-panel.png) -->
+![The /soglia panel in a terminal session: soft and hard thresholds with their token counts, presets and −5/+5 steps](docs/soglia-panel.png)
+
+*The `/soglia` panel in a terminal session, here with soft 30% and hard 50% on a 1M-token window.*
 
 Claude can read the current usage and zone with the mod's `context_usage` tool, which answers with one line such as `47% · zona morbida (40/60%)`. To hand off by hand, ask Claude to use the `auto-clear-context:handoff` skill.
 
@@ -246,8 +247,7 @@ Il plugin viene letto da quella cartella: non spostarla e non cancellarla.
 - **Handoff a mano.** Chiedi a Claude: "usa la skill auto-clear-context:handoff".
 - **Contesto attuale.** Claude può controllarlo con il tool `context_usage` della mod.
 
-<!-- Screenshot del pannello /soglia: salvalo in docs/soglia-panel.png e sostituisci questo commento con
-![Il pannello /soglia nel terminale](docs/soglia-panel.png) -->
+![Il pannello /soglia nel terminale: soglie morbida e dura con i token, preset e passi −5/+5](docs/soglia-panel.png)
 
 ### Limiti noti
 
