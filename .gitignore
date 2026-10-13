@@ -1,0 +1,23 @@
+# Release packages built from mod/ (attach them to a GitHub release instead)
+dist/
+*.zip
+
+# Logs from local manual test runs
+logs/
+*.log
+
+# Types the Claude Code engine writes next to the mod each time it loads it:
+# regenerated on every load and machine-specific (they list the local MCP servers)
+mod/.claude-plugin/types/
+
+# State the mod writes in the project it runs in (handoffs, archive, events.log)
+# and local Claude Code settings
+.claude/
+
+# Dependencies, editors, OS
+node_modules/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
