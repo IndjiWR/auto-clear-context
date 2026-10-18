@@ -16,9 +16,13 @@ import type { ThresholdField, ThresholdNotice, ThresholdWrite, ThresholdZone } f
 // Dopo un compact (stessa sessione, contesto di nuovo basso) le zone ripartono.
 // Tool context_usage (mcp__auto-clear-context__context_usage): percentuale e zona
 // su richiesta, in una riga.
-// Clear: turn.complete con .claude/handoff/pending.md in stato "validated".
+// Handoff: uno per sessione, .claude/handoff/pending/<session id>.md, perché più
+// sessioni possono lavorare nella stessa cartella. Il pending.md condiviso delle
+// versioni precedenti vale solo se il suo frontmatter porta l'id della sessione.
+// Clear: turn.complete con l'handoff della sessione in stato "validated".
 // Ripresa: session.end (clear) invia il prompt di ripresa; classic.SessionStart
-// (clear|compact) allega l'handoff validato e lo archivia.
+// allega e archivia l'handoff validato della sessione appena chiusa dal /clear
+// (o di quella compattata), mai quello di un'altra.
 // Soglie: /soglia apre un pannello (valore in modifica, preset e −5/+5),
 // /soglia 45 imposta la morbida, /soglia 45 65 morbida e dura. Con le righe di
 // /config la scrittura va nelle impostazioni e il motore ricarica il modulo con
@@ -27,7 +31,8 @@ import type { ThresholdField, ThresholdNotice, ThresholdWrite, ThresholdZone } f
 // Dove /config non ha le righe (sessioni headless, tab Code dell'app) le salva la
 // mod in $.store. Il monitor legge le soglie in vigore a ogni controllo.
 
-type Handoff = { text: string; status: string; id: string }
+// `session` è l'id nel frontmatter, se c'è; `path` il file da cui viene.
+type Handoff = { text: string; status: string; session: string | undefined; id: string; path: string }
 type ClearRecord = { at: number; handoff: string }
 type Field = ThresholdField
 type Pair = Record<Field, number>
@@ -93,17 +98,24 @@ const NEVER_POINTS = [
   'con lavoro in background attivo',
   "con una richiesta di permesso o una domanda all'utente in sospeso",
 ].join('; ')
-const HOW = [
-  `L'handoff lo prepara la skill auto-clear-context:handoff, che salva lo stato in ${HANDOFF_DIR}/pending.md e lo fa validare da un subagent;`,
-  "con l'handoff validato e nessun lavoro in background, a fine turno la mod esegue /clear e il lavoro riparte da solo nella sessione pulita.",
-  `Percentuale e zona si leggono su richiesta con il tool ${CONTEXT_TOOL}.`,
-].join(' ')
+
+// L'handoff di una sessione, relativo alla root del progetto.
+const handoffPath = (session: string) => `${HANDOFF_DIR}/pending/${session}.md`
+
+// Come si arriva al /clear, con il file di handoff della sessione.
+const how = (session: string) =>
+  [
+    `L'handoff lo prepara la skill auto-clear-context:handoff, che salva lo stato in ${handoffPath(session)} (il file di questa sessione) e lo fa validare da un subagent;`,
+    "con l'handoff validato e nessun lavoro in background, a fine turno la mod esegue /clear e il lavoro riparte da solo nella sessione pulita.",
+    `Percentuale e zona si leggono su richiesta con il tool ${CONTEXT_TOOL}.`,
+  ].join(' ')
 
 // "40/60%", con il margine "40/60/75%".
 const levels = (limits: Limits, withMargin = false) => `${limits.soft}/${limits.hard}${withMargin ? `/${limits.margin}` : ''}%`
 
 // La nota che la mod allega quando il contesto entra in una zona.
-const zoneNote = (zone: ThresholdZone, percent: number, limits: Limits, autoCompact: number | undefined) => {
+const zoneNote = (zone: ThresholdZone, percent: number, limits: Limits, autoCompact: number | undefined, session: string) => {
+  const steps = how(session)
   const seen = `La mod auto-clear-context rileva il contesto al ${percent}% della finestra`
   const levelsText = `soglie ${levels(limits)}, margine di sicurezza al ${limits.margin}%`
   if (zone === 3) {
@@ -111,7 +123,7 @@ const zoneNote = (zone: ThresholdZone, percent: number, limits: Limits, autoComp
     return [
       `${seen}: margine di sicurezza superato (soglie ${levels(limits, true)}); ${compact}.`,
       "In questa zona l'handoff è previsto subito, anche fuori dai punti sicuri: il lavoro rimasto a metà va nella sezione «Lavoro interrotto» dell'handoff.",
-      HOW,
+      steps,
     ].join(' ')
   }
   if (zone === 2) {
@@ -120,14 +132,14 @@ const zoneNote = (zone: ThresholdZone, percent: number, limits: Limits, autoComp
       "In questa zona l'handoff è previsto al primo punto sicuro: si completa l'azione atomica in corso e non se ne iniziano altre.",
       `Non sono punti sicuri: ${NEVER_POINTS}.`,
       "Se resta un debug aperto o ci sono test rossi, l'handoff aggiunge la sezione «Lavoro interrotto».",
-      HOW,
+      steps,
     ].join(' ')
   }
   return [
     `${seen}: zona morbida (${levelsText}).`,
     `In questa zona l'handoff è previsto al prossimo punto naturale: ${NATURAL_POINTS}.`,
     `Non sono punti adatti: ${NEVER_POINTS}.`,
-    HOW,
+    steps,
   ].join(' ')
 }
 
@@ -147,6 +159,11 @@ const PENDING_WRITE = { plugin: 'auto-clear-context', key: 'pendingWrite' } as c
 let pendingNote: { session: string; zone: ThresholdZone; text: string } | undefined
 let lastCheckAt = 0
 let isClearRequested = false
+// La sessione che l'ultimo /clear ha chiuso: SessionStart (clear) allega il suo
+// handoff, perché la sessione nuova ha già un altro id.
+let clearedSession: string | undefined
+// Gli handoff che non sono della sessione già segnalati nel log, per impronta.
+const reported = new Set<string>()
 let isExcludeChecked = false
 let logChain: Promise<void> = Promise.resolve()
 // Le soglie che questo modulo ha scritto in /config: valgono finché il motore non
@@ -161,8 +178,11 @@ const orElse = <T,>(read: Promise<T>, fallback: T) => read.catch(() => fallback)
 const paths = async ($: EngineInterface) => {
   const root = (await $.session.root()).replace(/[\\/]+$/, '')
   const dir = `${root}/${HANDOFF_DIR}`
-  return { root, pending: `${dir}/pending.md`, archive: `${dir}/archive`, events: `${dir}/events.log` }
+  return { root, shared: `${dir}/pending.md`, archive: `${dir}/archive`, events: `${dir}/events.log` }
 }
+
+// Le prime cifre dell'id, per distinguere le sessioni nel log condiviso.
+const short = (session: string) => session.slice(0, 8)
 
 const readText = async ($: EngineInterface, path: string) => {
   const read = await orElse($.fs.read(path), '')
@@ -208,22 +228,53 @@ const log = ($: EngineInterface, text: string) => {
     .catch(() => undefined)
 }
 
-const readPending = async ($: EngineInterface): Promise<Handoff | undefined> => {
-  const text = await readText($, (await paths($)).pending)
-  if (text.trim() === '') return undefined
-  const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? ''
-  const status = /^status:\s*(\S+)/m.exec(front)?.[1] ?? 'draft'
-  return { text, status, id: fingerprint(text) }
+// Il valore di un campo del frontmatter, senza virgolette; un campo vuoto non
+// prende la riga dopo.
+const frontField = (front: string, field: string) =>
+  new RegExp(`^${field}:[ \\t]*["']?([^\\s"']+)`, 'm').exec(front)?.[1]
+
+// Una riga di log per handoff, non una a ogni fine turno di ogni sessione.
+const reportOnce = ($: EngineInterface, handoff: Handoff, text: string) => {
+  if (reported.has(handoff.id)) return
+  reported.add(handoff.id)
+  log($, text)
 }
 
-// $.fs non cancella: l'handoff si copia in archive/ e pending.md resta vuoto.
+const readHandoff = async ($: EngineInterface, path: string): Promise<Handoff | undefined> => {
+  const text = await readText($, path)
+  if (text.trim() === '') return undefined
+  const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? ''
+  const status = frontField(front, 'status') ?? 'draft'
+  return { text, status, session: frontField(front, 'session'), id: fingerprint(text), path }
+}
+
+// L'handoff di una sessione: il suo file in pending/ (se il frontmatter non
+// porta l'id di un'altra), altrimenti il pending.md condiviso delle versioni
+// precedenti se porta il suo id. Un pending.md senza id non è di nessuna
+// sessione: resta dov'è e il log lo dice una volta.
+const readOwnHandoff = async ($: EngineInterface, session: string): Promise<Handoff | undefined> => {
+  const { root, shared } = await paths($)
+  const own = await readHandoff($, `${root}/${handoffPath(session)}`)
+  if (own !== undefined && (own.session === undefined || own.session === session)) return own
+  if (own?.status === 'validated') {
+    reportOnce($, own, `${handoffPath(session)} porta la sessione ${own.session}: non è di questa sessione, nessun /clear`)
+  }
+  const old = await readHandoff($, shared)
+  if (old?.session === session) return old
+  if (old?.status === 'validated' && old.session === undefined) {
+    reportOnce($, old, `${HANDOFF_DIR}/pending.md validato senza session nel frontmatter: non è di nessuna sessione, nessun /clear né ripresa (si riprende a mano)`)
+  }
+  return undefined
+}
+
+// $.fs non cancella: l'handoff si copia in archive/ e il suo file resta vuoto.
 const archive = async ($: EngineInterface, handoff: Handoff) => {
   await ensureExcluded($)
-  const { pending, archive: dir } = await paths($)
+  const { archive: dir } = await paths($)
   const stamp = new Date(await $.clock.now()).toISOString().replace(/[:.]/g, '-')
   const name = `${stamp}-${handoff.id}.md`
   await $.fs.write(`${dir}/${name}`, handoff.text)
-  await $.fs.write(pending, '')
+  await $.fs.write(handoff.path, '')
   return `${HANDOFF_DIR}/archive/${name}`
 }
 
@@ -361,8 +412,8 @@ const readAutoCompact = async ($: EngineInterface) => {
   return Math.min(100, Math.round((at * 100) / usage.context.window))
 }
 
-const buildNote = async ($: EngineInterface, zone: ThresholdZone, percent: number, limits: Limits) =>
-  zoneNote(zone, percent, limits, zone === 3 ? await readAutoCompact($) : AUTO_COMPACT_PERCENT)
+const buildNote = async ($: EngineInterface, zone: ThresholdZone, percent: number, limits: Limits, session: string) =>
+  zoneNote(zone, percent, limits, zone === 3 ? await readAutoCompact($) : AUTO_COMPACT_PERCENT, session)
 
 const readSignaled = async ($: EngineInterface, session: string) =>
   (await orElse(read($, { ...SIGNALED, id: session }), undefined)) ?? 0
@@ -604,7 +655,7 @@ export const register: Register = (on, options) => {
     const session = await $.session.id()
     if (zone <= (await readSignaled($, session))) return result
     if (pendingNote?.session === session && pendingNote.zone >= zone) return result
-    pendingNote = { session, zone, text: await buildNote($, zone, percent, limits) }
+    pendingNote = { session, zone, text: await buildNote($, zone, percent, limits, session) }
     log($, `contesto al ${percent}% (${ZONE_NAMES[zone]}, soglie ${levels(limits, true)}): la nota parte con il prossimo prompt`)
     return result
   })
@@ -625,7 +676,7 @@ export const register: Register = (on, options) => {
     if (!(await markSignaled($, session, zone))) return result
     if (pendingNote?.session === session && pendingNote.zone <= zone) pendingNote = undefined
     log($, `contesto al ${percent}% (${ZONE_NAMES[zone]}) durante il turno: segnalato a Claude`)
-    return { ...result, additionalContext: [...(result.additionalContext ?? []), await buildNote($, zone, percent, limits)] }
+    return { ...result, additionalContext: [...(result.additionalContext ?? []), await buildNote($, zone, percent, limits, session)] }
   }).catch(($, e, next) => next(e))
 
   on('prompt.submit', async ($, e, next) => {
@@ -641,7 +692,8 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     if (e.agentId !== undefined || e.isAborted || isClearRequested) return result
-    const handoff = await readPending($)
+    const session = await $.session.id()
+    const handoff = await readOwnHandoff($, session)
     if (handoff?.status !== 'validated') return result
 
     const now = await $.clock.now()
@@ -662,12 +714,13 @@ export const register: Register = (on, options) => {
 
     await $.store.set(CLEARS_KEY, [...clears, { at: now, handoff: handoff.id }].slice(-CLEARS_KEPT))
     isClearRequested = true
-    log($, `handoff ${handoff.id} validato: eseguo /clear`)
+    log($, `handoff ${handoff.id} della sessione ${short(session)} validato: eseguo /clear`)
     runClear($, true)
     return result
   })
 
   on('session.end', ($, e, next) => {
+    if (e.reason === 'clear') clearedSession = e.sessionId
     if (e.reason === 'clear' && isClearRequested) {
       isClearRequested = false
       pendingNote = undefined
@@ -689,10 +742,15 @@ export const register: Register = (on, options) => {
       await orElse(resetSignaled($), undefined)
       log($, 'compact: le zone tornano da segnalare in questa sessione')
     }
-    const handoff = await readPending($)
+    // Dopo un /clear l'handoff è della sessione che il clear ha chiuso; dopo un
+    // compact della sessione stessa.
+    const owner = e.source === 'clear' ? clearedSession : await $.session.id()
+    clearedSession = undefined
+    if (owner === undefined) return result
+    const handoff = await readOwnHandoff($, owner)
     if (handoff?.status !== 'validated') return result
     const archived = await archive($, handoff)
-    log($, `handoff ${handoff.id} allegato alla sessione (${e.source}) e archiviato in ${archived}`)
+    log($, `handoff ${handoff.id} della sessione ${short(owner)} allegato alla sessione (${e.source}) e archiviato in ${archived}`)
     return { ...result, additionalContext: [...(result.additionalContext ?? []), attached(handoff, archived)] }
   }).catch(($, e, next) => next(e))
 

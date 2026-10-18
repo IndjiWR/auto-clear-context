@@ -3,12 +3,13 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On, PromptSubmitInput } from 'claude-code'
 
 const ROOT = 'C:/progetto'
-const PENDING = `${ROOT}/.claude/handoff/pending.md`
+const PENDING = `${ROOT}/.claude/handoff/pending/s1.md`
 const EXCLUDE = `${ROOT}/.git/info/exclude`
 
 const VALIDATED = [
   '---',
   'status: validated',
+  'session: s1',
   'validated_at: 2026-10-12T08:00:00Z',
   'rounds: 1',
   '---',
@@ -102,7 +103,9 @@ test('handoff validato: un solo /clear, ripresa automatica, handoff allegato e a
   expect([...state.files.keys()].some(path => path.includes('/.claude/handoff/archive/'))).toBe(true)
   expect((state.files.get(EXCLUDE) ?? '').includes('.claude/handoff/')).toBe(true)
 
-  // Lo stesso handoff riscritto non ottiene un secondo clear.
+  // Lo stesso handoff riscritto non ottiene un secondo clear, neanche nella
+  // sessione che l'ha scritto.
+  state.session = 's1'
   state.files.set(PENDING, VALIDATED)
   await $.turn.complete(turnEnd('t2'))
   await settle($, () => false)

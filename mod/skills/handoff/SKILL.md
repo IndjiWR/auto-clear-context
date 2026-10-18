@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Salva lo stato del lavoro in .claude/handoff/pending.md, lo fa validare da un subagent fresco e lo segna come validato, così la mod auto-clear-context esegue /clear e fa ripartire il lavoro da solo. Da usare quando la mod segnala una zona di contesto (morbida, dura, margine di sicurezza) o quando l'utente chiede un handoff.
+description: Salva lo stato del lavoro in .claude/handoff/pending/<id della sessione>.md, lo fa validare da un subagent fresco e lo segna come validato, così la mod auto-clear-context esegue /clear e fa ripartire il lavoro da solo. Da usare quando la mod segnala una zona di contesto (morbida, dura, margine di sicurezza) o quando l'utente chiede un handoff.
 ---
 
 # Handoff
@@ -11,16 +11,21 @@ description: Salva lo stato del lavoro in .claude/handoff/pending.md, lo fa vali
    - **margine di sicurezza**: subito, anche con lavoro a metà.
 
    In ogni zona: nessun lavoro in background ancora attivo (subagent, comandi in background, monitor): aspettalo o fermalo. Se in zona dura o nel margine resta lavoro a metà (debug aperto, test rossi, modifica incompleta), l'handoff ha la sezione "Lavoro interrotto".
-2. **Scrivi `.claude/handoff/pending.md`** nella root del progetto, sotto i 9.000 caratteri, con il formato qui sotto e `status: draft`. Se il progetto è un repo git, `.claude/handoff/` deve stare in `.git/info/exclude`; aggiungilo se manca. Niente commit né push di questi file.
+2. **Scrivi `.claude/handoff/pending/${CLAUDE_SESSION_ID}.md`** nella root del progetto, sotto i 9.000 caratteri, con il formato qui sotto, `status: draft` e `session: ${CLAUDE_SESSION_ID}`.
+   - È il file di questa sessione. Nella stessa cartella possono lavorare altre sessioni, ognuna con il suo, e la mod esegue /clear solo nella sessione che l'ha scritto e allega l'handoff alla sessione pulita che la segue.
+   - Non scrivere in `.claude/handoff/pending.md` (il file condiviso delle versioni precedenti) né nel file di un'altra sessione.
+   - Solo se il percorso qui sopra non contiene un id di sessione, usa quello dell'ultima nota di zona della mod e metti in `session` l'id che compare nel nome di quel file.
+   - Se il progetto è un repo git, `.claude/handoff/` deve stare in `.git/info/exclude`; aggiungilo se manca. Niente commit né push di questi file.
 3. **Fallo validare** dall'agent `auto-clear-context:handoff-validator`, in foreground, passandogli **solo** il percorso assoluto del file. Confronta la sua ricostruzione con lo stato reale, correggi le lacune e rilancia. Al massimo 2 giri.
-4. **Segna l'handoff come validato** nel frontmatter: `status: validated`, `validated_at` (ISO 8601) e `rounds`.
-5. **Chiudi il turno con una sola riga**, senza altre azioni. A fine turno la mod esegue /clear, allega l'handoff alla sessione pulita e fa ripartire il lavoro.
+4. **Segna l'handoff come validato** nel frontmatter: `status: validated`, `validated_at` (ISO 8601) e `rounds`; `session` resta com'è.
+5. **Chiudi il turno con una sola riga** che nomina il file dell'handoff, senza altre azioni. A fine turno la mod esegue /clear, allega l'handoff alla sessione pulita e fa ripartire il lavoro; se il /clear non arriva, la riga dice da quale file riprendere a mano.
 
 ## Formato
 
 ```markdown
 ---
 status: draft
+session: ${CLAUDE_SESSION_ID}
 created_at: <ISO 8601>
 validated_at:
 rounds: 0
