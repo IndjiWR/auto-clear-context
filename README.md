@@ -19,7 +19,7 @@ The mod nudges, it does not force: it adds a note to Claude's context once per z
 | Part | Role |
 | --- | --- |
 | Hooks module (`mod/hooks/register.tsx`) | Measures context usage, tells Claude when it enters a zone, runs `/clear` and the resume; registers the `/soglia` command and the `context_usage` tool |
-| Skill `auto-clear-context:handoff` (`mod/skills/handoff/`) | Writes `.claude/handoff/pending.md`, has it checked by the validator, marks it `status: validated` |
+| Skill `auto-clear-context:handoff` (`mod/skills/handoff/`) | Writes the session's own `.claude/handoff/pending/<session id>.md`, has it checked by the validator, marks it `status: validated` |
 | Agent `auto-clear-context:handoff-validator` (`mod/agents/`) | Read-only subagent (Read, Glob, Grep): rebuilds the work from the handoff alone and lists the gaps |
 
 ### How it works
@@ -31,19 +31,29 @@ The mod nudges, it does not force: it adds a note to Claude's context once per z
 | Hard | from 60% | 600k | finish the atomic action in progress and hand off at the first safe point, recording unfinished work under "Lavoro interrotto" (interrupted work) |
 | Safety margin | from 75% (hard + 15) | 750k | hand off immediately, even with work half done |
 
-Each zone is signalled at most once per session (only the highest one if usage jumps past several), either with the next prompt or mid-turn, checked after tool calls at most every 30 s. After a compact the zones re-arm, and if auto-compact fires before the clear, a validated handoff is attached to the compacted session instead. A typical cycle in the transcript (values illustrative):
+Each zone is signalled at most once per session (only the highest one if usage jumps past several), either with the next prompt or mid-turn, checked after tool calls at most every 30 s. After a compact the zones re-arm, and if auto-compact fires before the clear, the session's validated handoff is attached to the compacted session instead. A typical cycle in the transcript (values illustrative):
 
 ```text
 auto-clear-context: contesto al 41% (zona morbida, soglie 40/60/75%): la nota parte con il prossimo prompt
 auto-clear-context: zona morbida segnalata a Claude insieme al prompt
-auto-clear-context: handoff 9b1c4e2a1f3c validato: eseguo /clear
+auto-clear-context: handoff 9b1c4e2a1f3c della sessione 3f2a8c1d validato: eseguo /clear
 auto-clear-context: clear eseguito: invio il prompt di ripresa
-auto-clear-context: handoff 9b1c4e2a1f3c allegato alla sessione (clear) e archiviato in .claude/handoff/archive/2026-10-12T10-15-00-000Z-9b1c4e2a1f3c.md
+auto-clear-context: handoff 9b1c4e2a1f3c della sessione 3f2a8c1d allegato alla sessione (clear) e archiviato in .claude/handoff/archive/2026-10-12T10-15-00-000Z-9b1c4e2a1f3c.md
 ```
 
 In order: the soft zone is reached at 41% and the note goes out with the next prompt; the handoff is validated and the mod runs `/clear`; the resume prompt is sent; the handoff is attached to the new session and archived.
 
-In the project the mod uses `.claude/handoff/`: `pending.md`, `archive/` and `events.log`.
+In the project the mod uses `.claude/handoff/`: `pending/` (one handoff per session), `archive/` and `events.log`.
+
+### Several sessions in one folder
+
+Each session writes its handoff to its own file, `.claude/handoff/pending/<session id>.md`, with `session: <session id>` in the frontmatter. The skill gets the id from `${CLAUDE_SESSION_ID}`, and the zone note names the same path. At the end of a turn the mod looks only at the current session's handoff, so a session never clears because another one validated its own. After a `/clear` it attaches only the handoff of the session that the clear closed. Two sessions can hand off at the same time without overwriting each other.
+
+A validated handoff stays in its file if its session is closed before the clear (for example while the hourly cap holds the clear back). No other session takes it over. While that session is still open, a manual `/clear` there attaches the handoff (without the resume prompt); otherwise resume it by hand by asking Claude to read the file. A draft left behind can only be resumed by hand.
+
+Handoffs written by earlier versions in the shared `.claude/handoff/pending.md` are used only when their frontmatter carries `session:` with the id of the session that reads them. Without that field the file belongs to no session: none clears or resumes from it, it stays where it is, and the log says so once. Resume it by hand or delete it.
+
+Restart open sessions after updating. A session still running the previous module reads only the shared `pending.md`, so a handoff written to the new path would not clear there.
 
 ### Install
 
@@ -71,7 +81,7 @@ Update with `claude plugin update auto-clear-context`.
 | --- | --- | --- | --- |
 | `threshold` | 40 | 0, or 1–85 and at least 10 below hard | soft zone (%); `0` turns the monitor off |
 | `hardThreshold` | 60 | soft + 10 to 95 | hard zone (%) |
-| `maxClearsPerHour` | 3 | — | automatic clears per rolling hour; `0` disables them; above 20 means no cap (the mod keeps only the last 20 clears) |
+| `maxClearsPerHour` | 3 | — | automatic clears per rolling hour, counted across all sessions; `0` disables them; above 20 means no cap (the mod keeps only the last 20 clears) |
 
 The safety margin is always hard + 15, capped at 95%. Only `/soglia` checks the ranges above: values set in `/config` or at install are taken as given, except that the hard threshold in force is raised to at least soft + 10 and capped at 95.
 
@@ -91,8 +101,9 @@ Claude can read the current usage and zone with the mod's `context_usage` tool, 
 
 ### Safety limits
 
-- **Only a handoff marked validated clears.** The mod runs `/clear` only when the frontmatter of `.claude/handoff/pending.md` says `status: validated`, which the skill sets after up to 2 rounds with the read-only validator. A draft never triggers a clear. The mod trusts that flag: it reads only the frontmatter, so a file marked validated by hand clears too.
-- **One clear per handoff**, and at most `maxClearsPerHour` (default 3) per rolling hour; past that the handoff waits.
+- **Only a handoff marked validated clears.** The mod runs `/clear` only when the frontmatter of the session's handoff says `status: validated`, which the skill sets after up to 2 rounds with the read-only validator. A draft never triggers a clear. The mod trusts that flag: it reads only the frontmatter, so a file marked validated by hand clears too.
+- **Only for the session that wrote it.** The clear runs only in the session that wrote the handoff, and only the fresh session that follows that clear gets the handoff attached. A validated file in a session's slot whose frontmatter carries another session's id is skipped and logged.
+- **One clear per handoff**, and at most `maxClearsPerHour` (default 3) per rolling hour; past that the handoff waits. The count is kept in the mod's store, so it is shared by all sessions on the machine.
 - **Never with work in flight.** No clear while a subagent is pending, running or waiting, after an interrupted turn, or at the end of a subagent's turn. In every zone the skill makes Claude wait for or stop background work first. In the soft and hard zones the skill and the zone notes also rule out handing off mid-edit, mid-debug or with a question to the user pending; whatever is left unfinished in the hard zone or the safety margin goes into the handoff's interrupted-work section.
 - **Bounded retry.** If `/clear` fails the mod retries once after 300 ms, then gives up and logs why. That handoff then counts as used: change it and validate it again to get a new clear.
 - **Everything is visible.** Every step shows up in the transcript (`auto-clear-context: …` lines) and in `.claude/handoff/events.log` (last 300 events).
@@ -103,6 +114,7 @@ Claude can read the current usage and zone with the mod's `context_usage` tool, 
 - The "Ripristina /config" (restore `/config`) button of the `/soglia` panel does not work yet in real sessions, although the test kit's version of the flow passes: set the value with `/soglia N`.
 - The mod cannot see background commands (Bash, monitors); the skill makes Claude wait for them or stop them before the handoff.
 - The git exclude is skipped in worktrees and submodules, where `.git` is a file.
+- The mods API cannot delete files: after the resume a session's file in `.claude/handoff/pending/` stays behind empty (an empty file means nothing pending). Empty files and drafts left by closed sessions pile up there and can be deleted by hand.
 - Claude Code only (terminal and the desktop Code tab); it does not run in claude.ai chats.
 - Organization policies can block personal mods: if `/status` shows "Enterprise managed settings", ask your admin.
 
@@ -114,7 +126,7 @@ Mods are in **early access**: the hooks API this module is built on (`register`,
 
 | Version | Surface | Result |
 | --- | --- | --- |
-| 2.1.296 | `claude plugin test mod` (Windows 11) | 28 of 28 tests pass; `claude plugin validate` passes |
+| 2.1.296 | `claude plugin test mod` (Windows 11) | 37 of 37 tests pass; `claude plugin validate` passes |
 | 2.1.296 | terminal | manual tests in real sessions |
 | 2.1.295 | desktop app, Code tab (Windows) | manual tests in real sessions |
 | 2.1.212 | any | not supported: no mods API |
@@ -129,9 +141,9 @@ One TypeScript/TSX hooks module on the mods API:
 | --- | --- |
 | `session.measure`, `classic.PostToolUse` | watch context usage after each turn and during long turns |
 | `prompt.submit` | attaches the zone note to the next prompt |
-| `turn.complete` | checks the handoff, the caps and running subagents, then runs `/clear` |
-| `session.end` | submits the resume prompt after the clear |
-| `classic.SessionStart` | attaches the validated handoff to the new session and archives it |
+| `turn.complete` | checks the session's own handoff, the caps and running subagents, then runs `/clear` |
+| `session.end` | remembers which session the clear closed and submits the resume prompt |
+| `classic.SessionStart` | attaches the validated handoff of the session the clear closed (or of the compacted one) and archives it |
 | `session.start`, `command.run`, `ui.render`, `tool.call` | register and serve `/soglia`, its panel and `context_usage` |
 
 Zone flags live in `$.state` and are written with `ifVersion`, so the two monitor channels never signal the same zone twice. A two-value threshold change parks its second write in `$.state`, so it survives the module reload that a `/config` write triggers. The tests use the official `claude-code/testing` kit and render the `/soglia` panel on both the terminal and the desktop surface.
@@ -171,7 +183,7 @@ Mod per **Claude Code** che gestisce da sola le conversazioni lunghe. Quando il 
 | Parte | Cosa fa |
 | --- | --- |
 | Mod (`mod/hooks/register.tsx`) | Misura il contesto, avvisa Claude quando entra in una zona, esegue `/clear` e la ripresa; comando `/soglia`; tool `context_usage` |
-| Skill `auto-clear-context:handoff` (`mod/skills/handoff/`) | Scrive `.claude/handoff/pending.md`, lo fa validare e lo segna come validato |
+| Skill `auto-clear-context:handoff` (`mod/skills/handoff/`) | Scrive il file della sessione, `.claude/handoff/pending/<id della sessione>.md`, lo fa validare e lo segna come validato |
 | Agent `auto-clear-context:handoff-validator` (`mod/agents/`) | Subagent in sola lettura: ricostruisce il lavoro dal solo handoff ed elenca le lacune |
 
 ### Come funziona
@@ -187,12 +199,21 @@ Nelle zone morbida e dura mai a metà di un edit o di un debug; in nessuna zona 
 
 Dopo l'handoff validato, a fine turno la mod esegue `/clear`, allega l'handoff alla sessione nuova e fa ripartire il turno dal "prossimo passo".
 
+**Più sessioni nella stessa cartella.** Ognuna scrive il suo handoff in `.claude/handoff/pending/<id della sessione>.md`, con `session: <id della sessione>` nel frontmatter. La skill prende l'id da `${CLAUDE_SESSION_ID}` e la nota di zona riporta lo stesso percorso. A fine turno la mod guarda solo l'handoff della sessione, quindi una sessione non fa mai `/clear` per l'handoff validato di un'altra; dopo il `/clear` allega solo l'handoff della sessione che il clear ha chiuso.
+
+Se la sessione si chiude prima del clear (per esempio mentre il limite orario lo trattiene), l'handoff validato resta nel suo file e nessun'altra sessione lo prende. Finché quella sessione è aperta, un `/clear` a mano lì allega l'handoff (senza il prompt di ripresa); altrimenti chiedi a Claude di leggere quel file. Una bozza rimasta lì si riprende solo a mano.
+
+Gli handoff delle versioni precedenti, nel `.claude/handoff/pending.md` condiviso, valgono solo se il frontmatter porta `session:` con l'id della sessione che li legge. Senza quel campo il file non è di nessuna sessione: nessuna fa `/clear` né riprende da lì, il file resta dov'è e il log lo segnala una volta. Riprendilo a mano o cancellalo.
+
+Dopo l'aggiornamento riavvia le sessioni aperte: finché usano la versione vecchia della mod leggono solo il `pending.md` condiviso, e un handoff scritto nel percorso nuovo lì non fa partire il `/clear`.
+
 Sicurezze:
-- un solo clear per handoff, al massimo 3 clear all'ora (opzione `maxClearsPerHour`);
+- `/clear` solo nella sessione che ha scritto l'handoff, e l'handoff va solo alla sessione pulita che la segue;
+- un solo clear per handoff, al massimo 3 clear all'ora contati su tutte le sessioni (opzione `maxClearsPerHour`);
 - nessun clear con subagent ancora attivi;
 - ogni passaggio compare nel transcript (righe `auto-clear-context: …`) e in `.claude/handoff/events.log`.
 
-Nel progetto la mod usa la cartella `.claude/handoff/`, con `pending.md`, `archive/` ed `events.log`. Se la root del progetto ha una cartella `.git`, la aggiunge da sola a `.git/info/exclude`, così non finisce in un commit.
+Nel progetto la mod usa la cartella `.claude/handoff/`, con `pending/` (un handoff per sessione), `archive/` ed `events.log`. Se la root del progetto ha una cartella `.git`, la aggiunge da sola a `.git/info/exclude`, così non finisce in un commit.
 
 ### Requisiti
 
@@ -254,6 +275,7 @@ Il plugin viene letto da quella cartella: non spostarla e non cancellarla.
 - Il pulsante "Ripristina /config" del pannello `/soglia` non funziona ancora: imposta il valore con `/soglia N`.
 - I comandi in background (Bash, monitor) la mod non li vede: la skill fa aspettare o fermare Claude prima dell'handoff.
 - Nei worktree e nei submodule, dove `.git` è un file, l'esclusione da git non viene aggiunta.
+- L'API delle mod non cancella file: dopo la ripresa il file della sessione in `.claude/handoff/pending/` resta vuoto (vuoto vuol dire nessun handoff in attesa). I file vuoti e le bozze delle sessioni chiuse si accumulano lì e si possono cancellare a mano.
 
 ### Sviluppo
 
