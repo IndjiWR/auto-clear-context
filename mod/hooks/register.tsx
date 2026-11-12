@@ -76,7 +76,8 @@ const CONTEXT_TOOL_DESCRIPTION = [
 const RESUME = [
   'Ripresa automatica della mod auto-clear-context: il /clear è stato eseguito dopo un handoff validato.',
   `L'handoff è allegato al contesto di questa sessione, con una copia in ${HANDOFF_DIR}/archive/.`,
-  "Il lavoro riprende dal prossimo passo indicato nell'handoff, dopo aver riletto i file che elenca.",
+  "Prima di toccare il codice si lanciano i comandi della sezione «Verifica alla ripresa» e si confronta l'esito con quello atteso;",
+  "poi il lavoro riprende dal prossimo passo indicato nell'handoff, dopo aver riletto i file che elenca.",
 ].join(' ')
 
 const USAGE = [

@@ -20,7 +20,7 @@ The mod nudges, it does not force: it adds a note to Claude's context once per z
 | --- | --- |
 | Hooks module (`mod/hooks/register.tsx`) | Measures context usage, tells Claude when it enters a zone, runs `/clear` and the resume; registers the `/soglia` command and the `context_usage` tool |
 | Skill `auto-clear-context:handoff` (`mod/skills/handoff/`) | Writes the session's own `.claude/handoff/pending/<session id>.md`, has it checked by the validator, marks it `status: validated` |
-| Agent `auto-clear-context:handoff-validator` (`mod/agents/`) | Read-only subagent (Read, Glob, Grep): rebuilds the work from the handoff alone and lists the gaps |
+| Agent `auto-clear-context:handoff-validator` (`mod/agents/`) | Read-only subagent (Read, Glob, Grep): rebuilds the work from the handoff alone and checks it against a 12-point checklist (self-contained, git state, real paths, resume checks, verified facts vs assumptions, skills and tools by exact name) |
 
 ### How it works
 
@@ -126,6 +126,7 @@ Mods are in **early access**: the hooks API this module is built on (`register`,
 
 | Version | Surface | Result |
 | --- | --- | --- |
+| 2.1.322 | `claude plugin test mod` (macOS) | 37 of 37 tests pass; `claude plugin validate` passes |
 | 2.1.296 | `claude plugin test mod` (Windows 11) | 37 of 37 tests pass; `claude plugin validate` passes |
 | 2.1.296 | terminal | manual tests in real sessions |
 | 2.1.295 | desktop app, Code tab (Windows) | manual tests in real sessions |
@@ -184,7 +185,7 @@ Mod per **Claude Code** che gestisce da sola le conversazioni lunghe. Quando il 
 | --- | --- |
 | Mod (`mod/hooks/register.tsx`) | Misura il contesto, avvisa Claude quando entra in una zona, esegue `/clear` e la ripresa; comando `/soglia`; tool `context_usage` |
 | Skill `auto-clear-context:handoff` (`mod/skills/handoff/`) | Scrive il file della sessione, `.claude/handoff/pending/<id della sessione>.md`, lo fa validare e lo segna come validato |
-| Agent `auto-clear-context:handoff-validator` (`mod/agents/`) | Subagent in sola lettura: ricostruisce il lavoro dal solo handoff ed elenca le lacune |
+| Agent `auto-clear-context:handoff-validator` (`mod/agents/`) | Subagent in sola lettura: ricostruisce il lavoro dal solo handoff e lo verifica con 12 controlli (autosufficienza, stato git, percorsi reali, verifica alla ripresa, fatti separati dalle ipotesi, skill e strumenti col nome esatto) |
 
 ### Come funziona
 
@@ -218,7 +219,7 @@ Nel progetto la mod usa la cartella `.claude/handoff/`, con `pending/` (un hando
 ### Requisiti
 
 - **Solo Claude Code**: terminale e tab Code dell'app desktop. Non funziona nelle chat di claude.ai.
-- **Claude Code recente.** Provata su 2.1.295 (tab Code dell'app desktop, Windows) e 2.1.296 (terminale); la 2.1.212 non supporta le mods. Controlla con `claude --version` (aggiorna con `claude update`) o con `/status`.
+- **Claude Code recente.** Provata su 2.1.295 (tab Code dell'app desktop, Windows) 2.1.296 (terminale) e 2.1.322 (test su macOS); la 2.1.212 non supporta le mods. Controlla con `claude --version` (aggiorna con `claude update`) o con `/status`.
 - **Early access.** Le mods sono in early access e l'API può cambiare tra una versione e l'altra.
 - **Account aziendali.** Le policy dell'organizzazione possono bloccare le mod personali. Se `/status` mostra "Enterprise managed settings", chiedi all'admin.
 

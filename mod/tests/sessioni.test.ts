@@ -29,7 +29,13 @@ const handoff = (title: string, session?: string) =>
 
 const typed = (text: string): PromptSubmitInput => ({ text, wait: false, origin: { kind: 'composer' } })
 
-const key = (path: string) => path.replace(/\\/g, '/')
+// Su macOS/Linux una radice "C:/…" non è assoluta e il motore le antepone la
+// cartella del plugin: si confronta dal punto in cui compare ROOT.
+const key = (path: string) => {
+  const slashed = path.replace(/\\/g, '/')
+  const at = slashed.indexOf(ROOT)
+  return at < 0 ? slashed : slashed.slice(at)
+}
 
 const world = (on: On) => {
   mock.store(on)

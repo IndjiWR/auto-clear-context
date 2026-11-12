@@ -1,6 +1,6 @@
 {
   "name": "auto-clear-context",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Vicino alle soglie di contesto (morbida, dura, margine di sicurezza) Claude salva lo stato in un handoff validato; la mod esegue /clear e fa ripartire il lavoro nella sessione pulita.",
   "author": { "name": "Indji" },
   "types": "./types/index.d.ts",

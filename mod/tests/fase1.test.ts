@@ -22,7 +22,13 @@ const VALIDATED = [
 const typed = (text: string): PromptSubmitInput => ({ text, wait: false, origin: { kind: 'composer' } })
 
 // Il motore può passare i percorsi con le barre di Windows.
-const key = (path: string) => path.replace(/\\/g, '/')
+// Su macOS/Linux una radice "C:/…" non è assoluta e il motore le antepone la
+// cartella del plugin: si confronta dal punto in cui compare ROOT.
+const key = (path: string) => {
+  const slashed = path.replace(/\\/g, '/')
+  const at = slashed.indexOf(ROOT)
+  return at < 0 ? slashed : slashed.slice(at)
+}
 
 // Il mondo sotto la mod: file in memoria, una sessione, il fondo di ogni evento.
 const world = (on: On) => {
