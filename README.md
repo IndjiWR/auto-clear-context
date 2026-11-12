@@ -1,3 +1,5 @@
+> **Archiviato.** Questa mod ora vive in [IndjiWR/claude-plugins](https://github.com/IndjiWR/claude-plugins/tree/main/mods/auto-clear-context). Installazione: `/plugin marketplace add IndjiWR/claude-plugins` poi `/plugin install auto-clear-context@indji-plugins`.
+
 # auto-clear-context
 
 A **Claude Code** mod that keeps long sessions going on its own: near the context thresholds Claude saves its state in a validated handoff, the mod runs `/clear` and the work resumes by itself in the clean session.
